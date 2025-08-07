@@ -497,6 +497,113 @@ export class SCBApiClient {
     return DatasetSchema.parse(data);
   }
 
+  /**
+   * Transform JSON-stat2 data into structured records for easy analysis
+   */
+  transformToStructuredData(jsonStat2Data: Dataset, selection?: Record<string, string[]>): {
+    query: any;
+    data: Array<Record<string, any>>;
+    metadata: any;
+    summary: any;
+  } {
+    const records: Array<Record<string, any>> = [];
+    
+    if (!jsonStat2Data.value || !jsonStat2Data.dimension) {
+      return {
+        query: { selection, table_id: null },
+        data: [],
+        metadata: {
+          source: jsonStat2Data.source || "Statistics Sweden",
+          updated: jsonStat2Data.updated,
+          table_name: jsonStat2Data.label
+        },
+        summary: { total_records: 0, has_data: false }
+      };
+    }
+
+    const dimensions = Object.entries(jsonStat2Data.dimension);
+    const dimensionSizes = dimensions.map(([_, dimDef]) => Object.keys(dimDef.category.index).length);
+    
+    // Transform each data point into a structured record
+    jsonStat2Data.value.forEach((value, flatIndex) => {
+      if (value === null) return; // Skip null values
+      
+      const record: Record<string, any> = {};
+      
+      // Calculate the multi-dimensional indices from the flat array index
+      let temp = flatIndex;
+      for (let i = dimensions.length - 1; i >= 0; i--) {
+        const [dimName, dimDef] = dimensions[i];
+        const dimSize = dimensionSizes[i];
+        const dimIndex = temp % dimSize;
+        temp = Math.floor(temp / dimSize);
+        
+        // Get the code and label for this dimension value
+        const codes = Object.keys(dimDef.category.index);
+        const code = codes[dimIndex];
+        const label = dimDef.category.label ? dimDef.category.label[code] : code;
+        
+        // Add both code and human-readable name to the record
+        const baseName = this.getDimensionBaseName(dimName);
+        record[`${baseName}_code`] = code;
+        record[`${baseName}_name`] = label || code;
+      }
+      
+      record.value = value;
+      records.push(record);
+    });
+
+    // Calculate summary statistics
+    const totalRecords = records.length;
+    const totalValue = records.reduce((sum, record) => sum + (record.value || 0), 0);
+    const nonNullRecords = records.filter(r => r.value !== null && r.value !== undefined);
+
+    return {
+      query: {
+        selection: selection || {},
+        table_id: jsonStat2Data.id ? jsonStat2Data.id[0] : null,
+        requested_at: new Date().toISOString()
+      },
+      data: records,
+      metadata: {
+        source: jsonStat2Data.source || "Statistics Sweden", 
+        updated: jsonStat2Data.updated,
+        table_name: jsonStat2Data.label,
+        data_shape: jsonStat2Data.size,
+        dimensions: dimensions.map(([name, def]) => ({
+          name,
+          label: def.label,
+          values_count: Object.keys(def.category.index).length
+        }))
+      },
+      summary: {
+        total_records: totalRecords,
+        non_null_records: nonNullRecords.length,
+        total_value: totalValue,
+        has_data: totalRecords > 0
+      }
+    };
+  }
+
+  /**
+   * Convert dimension names to user-friendly base names
+   */
+  getDimensionBaseName(dimName: string): string {
+    const nameMapping: Record<string, string> = {
+      'Region': 'region',
+      'Alder': 'age', 
+      'Kon': 'sex',
+      'Tid': 'year',
+      'UtbildningsNiva': 'education_level',
+      'ContentsCode': 'observation_type',
+      'Sysselsattning': 'employment_status',
+      'Civilstand': 'marital_status',
+      'Familjetyp': 'family_type'
+    };
+    
+    return nameMapping[dimName] || dimName.toLowerCase();
+  }
+
   getRateLimitInfo(): RateLimitInfo | null {
     return this.rateLimitInfo;
   }

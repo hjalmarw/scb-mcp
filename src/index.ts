@@ -14,6 +14,13 @@ import { SCBApiClient } from './api-client.js';
 class SCBMCPServer {
   private server: Server;
   private apiClient: SCBApiClient;
+  
+  /**
+   * Format structured data in a user-friendly way with both readable summary and raw JSON
+   */
+  private formatStructuredResponse(summary: string, data: any): string {
+    return `${summary}\n\n**📊 Structured Data:**\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
+  }
 
   constructor() {
     this.server = new Server(
@@ -286,6 +293,10 @@ class SCBMCPServer {
               type: 'string',
               description: 'Municipality or region name (e.g., "Lerum", "Stockholm", "Gothenburg")',
             },
+            tableId: {
+              type: 'string',
+              description: 'Optional: Specific table to search for region codes (ensures compatibility)',
+            },
             language: {
               type: 'string',
               description: 'Language code (en, sv)',
@@ -518,41 +529,37 @@ ${metadata.extension?.notes?.map(note =>
     const { tableId, selection, language = 'en' } = args;
     const data = await this.apiClient.getTableData(tableId, selection, language);
     
-    const totalValues = data.value?.filter(v => v !== null).length || 0;
-    const nullValues = data.value?.filter(v => v === null).length || 0;
+    // Transform to structured JSON data
+    const structuredData = this.apiClient.transformToStructuredData(data, selection);
     
-    // Create a sample of the data
-    const sampleSize = Math.min(10, totalValues);
-    const sampleData = data.value?.slice(0, sampleSize).map((value, index) => 
-      `${index + 1}. ${value !== null ? value.toLocaleString() : 'null'}`
-    ).join('\n') || 'No data available';
+    // Create user-friendly summary
+    const summary = `**📊 Data Retrieved from ${tableId}**
 
-    const dimensionInfo = Object.entries(data.dimension).map(([varCode, varDef]) => {
-      const selectedValues = Object.keys(varDef.category.index).slice(0, 5);
-      const totalValues = Object.keys(varDef.category.index).length;
-      return `  **${varDef.label}** (${varCode}): ${selectedValues.join(', ')}${totalValues > 5 ? ` ... (${totalValues} total)` : ''}`;
-    }).join('\n');
+**Table:** ${structuredData.metadata.table_name}
+**Records:** ${structuredData.summary.total_records.toLocaleString()} data points
+**Source:** ${structuredData.metadata.source}
+**Updated:** ${structuredData.metadata.updated || 'Unknown'}
 
+${selection ? `**Selection Applied:**
+${Object.entries(selection).map(([key, values]) => `- ${key}: ${values.join(', ')}`).join('\n')}` : '**Full Dataset Retrieved**'}
+
+**Data Preview:**
+${structuredData.data.slice(0, 3).map(record => {
+  const mainValue = record.value ? `Value: ${record.value}` : '';
+  const otherFields = Object.entries(record)
+    .filter(([key]) => key !== 'value')
+    .map(([key, val]) => `${key}: ${val}`)
+    .slice(0, 2)
+    .join(', ');
+  return `- ${otherFields}${mainValue ? `, ${mainValue}` : ''}`;
+}).join('\n')}
+${structuredData.data.length > 3 ? `... and ${(structuredData.data.length - 3).toLocaleString()} more records` : ''}`;
+    
     return {
       content: [
         {
           type: 'text',
-          text: `**${data.label}** Data
-
-**Data Summary:**
-- Total Values: ${totalValues.toLocaleString()}
-- Null Values: ${nullValues.toLocaleString()}
-- Dimensions: ${Object.keys(data.dimension).length}
-- Data Shape: ${data.size.join(' × ')}
-
-**Selected Dimensions:**
-${dimensionInfo}
-
-**Sample Data (first ${sampleSize} values):**
-${sampleData}
-
-${data.source ? `**Source:** ${data.source}` : ''}
-${data.updated ? `**Last Updated:** ${new Date(data.updated).toLocaleDateString()}` : ''}`,
+          text: this.formatStructuredResponse(summary, structuredData)
         },
       ],
     };
@@ -657,145 +664,200 @@ ${recommendations}
   private async handleGetTableVariables(args: { tableId: string; language?: string; variableName?: string }) {
     const { tableId, language = 'en', variableName } = args;
     
-    // Get table metadata to extract variable information
-    const metadata = await this.apiClient.getTableMetadata(tableId, language);
-    
-    if (!metadata.dimension) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `**Variables for ${tableId}**
-
-❌ No variable information available for this table.
-
-💡 Try using \`scb_get_table_info\` for general table information.`,
-          },
-        ],
-      };
-    }
-
-    const variables = Object.entries(metadata.dimension);
-    
-    // Filter to specific variable if requested
-    const filteredVariables = variableName 
-      ? variables.filter(([code, def]) => 
-          code.toLowerCase() === variableName.toLowerCase() ||
-          def.label.toLowerCase().includes(variableName.toLowerCase())
-        )
-      : variables;
-
-    if (filteredVariables.length === 0) {
-      const availableVars = variables.map(([code, def]) => `"${code}" (${def.label})`).join(', ');
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `**Variables for ${tableId}**
-
-❌ Variable "${variableName}" not found.
-
-**Available variables:** ${availableVars}`,
-          },
-        ],
-      };
-    }
-
-    const variableDetails = filteredVariables.map(([varCode, varDef]) => {
-      const values = Object.entries(varDef.category.index);
-      const labels = varDef.category.label;
-      
-      // Show first 10 values, then indicate if there are more
-      const displayValues = values.slice(0, 10).map(([code, index]) => {
-        const label = labels ? labels[code] : '';
-        return label ? `  "${code}" = ${label}` : `  "${code}"`;
-      });
-      
-      const hasMore = values.length > 10;
-      const moreText = hasMore ? `  ... and ${values.length - 10} more values` : '';
-      
-      return `**${varDef.label}** (${varCode})
-📊 ${values.length} total values available
-
-**Sample values:**
-${displayValues.join('\n')}${moreText ? '\n' + moreText : ''}
-
-💡 **Usage:** \`{"${varCode}": ["${values[0]?.[0] || 'value'}"]}\``;
-    }).join('\n\n');
-
-    const usageTips = filteredVariables.length === 1 && variableName ? '' : `
-
-💡 **Selection Tips:**
-- Use \`{"variableCode": ["value1", "value2"]}\` format
-- Use \`{"variableCode": ["*"]}\` for all values  
-- Use \`{"variableCode": ["TOP(5)"]}\` for first 5 values
-- Use \`scb_get_table_variables\` with \`variableName\` for specific variable details`;
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `**Variables for ${metadata.label}** (${tableId})
-
-${variableDetails}${usageTips}`,
-        },
-      ],
-    };
-  }
-
-  private async handleFindRegionCode(args: { query: string; language?: string }) {
-    const { query, language = 'en' } = args;
-    
     try {
-      // Look for a common population table that has region data
-      const searchResults = await this.apiClient.searchTables({
-        query: 'population municipality region',
-        pageSize: 10,
-        lang: language
-      });
-
-      // Find tables with Region variable
-      const regionTables = searchResults.tables.filter(table => 
-        table.variableNames?.some(v => v.toLowerCase().includes('region')) &&
-        (table.label.toLowerCase().includes('population') || table.label.toLowerCase().includes('befolkning'))
-      );
-
-      if (regionTables.length === 0) {
+      // Get table metadata to extract variable information
+      const metadata = await this.apiClient.getTableMetadata(tableId, language);
+      
+      if (!metadata.dimension) {
         return {
           content: [
             {
               type: 'text',
-              text: `**Region Code Search for "${query}"**
-
-❌ Could not find suitable regional tables to lookup codes.
-
-💡 **Alternative approach:**
-Try using \`scb_search_regions\` to find relevant tables, then use \`scb_get_table_variables\` to explore region codes.
-
-🔍 **Common municipality codes:**
-- Stockholm: 0180
-- Gothenburg: 1480  
-- Malmö: 1280
-- Lerum: 1484`,
+              text: JSON.stringify({
+                table_id: tableId,
+                error: "No variable information available for this table",
+                suggestion: "Try using scb_get_table_info for general table information"
+              }, null, 2)
             },
           ],
         };
       }
 
-      // Use the first suitable table to get region information
-      const tableId = regionTables[0].id;
-      const metadata = await this.apiClient.getTableMetadata(tableId, language);
+      const variables = Object.entries(metadata.dimension);
+      
+      // Filter to specific variable if requested
+      const filteredVariables = variableName 
+        ? variables.filter(([code, def]) => 
+            code.toLowerCase() === variableName.toLowerCase() ||
+            def.label.toLowerCase().includes(variableName.toLowerCase())
+          )
+        : variables;
+
+      if (filteredVariables.length === 0) {
+        const availableVars = variables.map(([code, def]) => ({ code, label: def.label }));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                table_id: tableId,
+                error: `Variable "${variableName}" not found`,
+                available_variables: availableVars
+              }, null, 2)
+            },
+          ],
+        };
+      }
+
+      // Transform variables into structured JSON
+      const variableData = filteredVariables.map(([varCode, varDef]) => {
+        const values = Object.entries(varDef.category.index);
+        const labels = varDef.category.label || {};
+        
+        // Get all values with their labels
+        const allValues = values.map(([code, index]) => ({
+          code,
+          label: labels[code] || code,
+          index
+        }));
+        
+        return {
+          variable_code: varCode,
+          variable_name: varDef.label,
+          variable_type: varCode.toLowerCase(),
+          total_values: values.length,
+          sample_values: allValues.slice(0, 10), // Show first 10 values
+          has_more: values.length > 10,
+          usage_example: {
+            single_value: { [varCode]: [values[0]?.[0] || "value"] },
+            multiple_values: { [varCode]: ["value1", "value2"] },
+            all_values: { [varCode]: ["*"] },
+            top_values: { [varCode]: ["TOP(5)"] }
+          }
+        };
+      });
+
+      const responseData = {
+        table_id: tableId,
+        table_name: metadata.label,
+        query: {
+          variable_filter: variableName || null,
+          language
+        },
+        variables: variableData,
+        metadata: {
+          total_variables: variables.length,
+          filtered_variables: filteredVariables.length,
+          source: metadata.source || "Statistics Sweden",
+          updated: metadata.updated
+        }
+      };
+
+      const summary = `**🔍 Table Variables for ${tableId}**
+
+**Table:** ${metadata.label}
+${variableName ? `**Filtered for:** ${variableName}` : '**All Variables**'}
+
+${variableData.map(v => 
+  `**${v.variable_code}** (${v.variable_name})
+  - Values: ${v.total_values.toLocaleString()}
+  - Sample: ${v.sample_values.slice(0, 3).map(s => s.label).join(', ')}${v.has_more ? '...' : ''}
+  - Usage: {"${v.variable_code}": ["${v.sample_values[0]?.code || 'value'}"]}
+`).join('\n')}
+
+💡 **Total Variables:** ${variables.length} available`;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: this.formatStructuredResponse(summary, responseData)
+          },
+        ],
+      };
+      
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: {
+                type: "table_variables_failed",
+                message: error instanceof Error ? error.message : String(error),
+                table_id: tableId
+              }
+            }, null, 2)
+          },
+        ],
+      };
+    }
+  }
+
+  private async handleFindRegionCode(args: { query: string; tableId?: string; language?: string }) {
+    const { query, tableId, language = 'en' } = args;
+    
+    try {
+      let targetTableId: string;
+      
+      if (tableId) {
+        // Use the specified table directly
+        targetTableId = tableId;
+      } else {
+        // Look for a common population table that has region data
+        const searchResults = await this.apiClient.searchTables({
+          query: 'population municipality region',
+          pageSize: 10,
+          lang: language
+        });
+
+        // Find tables with Region variable
+        const regionTables = searchResults.tables.filter(table => 
+          table.variableNames?.some(v => v.toLowerCase().includes('region')) &&
+          (table.label.toLowerCase().includes('population') || table.label.toLowerCase().includes('befolkning'))
+        );
+
+        if (regionTables.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                query: query,
+                matches: [],
+                error: "No suitable regional tables found",
+                common_codes: [
+                  { code: "0180", name: "Stockholm" },
+                  { code: "1480", name: "Gothenburg" },
+                  { code: "1280", name: "Malmö" },
+                  { code: "1484", name: "Lerum" },
+                  { code: "0380", name: "Uppsala" }
+                ],
+                suggestion: "Use scb_search_regions to find relevant tables manually"
+              }, null, 2)
+            },
+          ],
+        };
+        }
+
+        // Use the first suitable table to get region information
+        targetTableId = regionTables[0].id;
+      }
+
+      // Now use targetTableId (either specified or found)
+      const metadata = await this.apiClient.getTableMetadata(targetTableId, language);
       
       if (!metadata.dimension || !metadata.dimension['Region']) {
         return {
           content: [
             {
               type: 'text',
-              text: `**Region Code Search for "${query}"**
-
-❌ Could not access region data from table ${tableId}.
-
-💡 Try using \`scb_get_table_variables\` with tableId="${tableId}" to explore available regions manually.`,
+              text: JSON.stringify({
+                query: query,
+                error: `Could not access region data from table ${targetTableId}`,
+                suggestion: `Use scb_get_table_variables with tableId="${targetTableId}" to explore available regions manually`,
+                source_table: targetTableId
+              }, null, 2)
             },
           ],
         };
@@ -806,13 +868,13 @@ Try using \`scb_search_regions\` to find relevant tables, then use \`scb_get_tab
       const regionLabels = regionDimension.category.label || {};
 
       // Search for the query in region labels and codes
-      const matches = regionEntries.filter(([code, index]) => {
+      const exactMatches = regionEntries.filter(([code, index]) => {
         const label = regionLabels[code] || '';
         return label.toLowerCase().includes(query.toLowerCase()) ||
                code.toLowerCase().includes(query.toLowerCase());
       });
 
-      if (matches.length === 0) {
+      if (exactMatches.length === 0) {
         // Do a fuzzy search for partial matches
         const partialMatches = regionEntries.filter(([code, index]) => {
           const label = regionLabels[code] || '';
@@ -826,67 +888,91 @@ Try using \`scb_search_regions\` to find relevant tables, then use \`scb_get_tab
           return {
             content: [
               {
-                type: 'text',
-                text: `**Region Code Search for "${query}"**
-
-❌ No regions found matching "${query}".
-
-💡 **Try these common municipality codes:**
-- Stockholm: 0180
-- Gothenburg (Göteborg): 1480  
-- Malmö: 1280
-- Lerum: 1484
-- Uppsala: 0380
-
-🔍 Use \`scb_get_table_variables\` with tableId="${tableId}" and variableName="Region" to see all available regions.`,
+                type: 'text', 
+                text: JSON.stringify({
+                  query: query,
+                  matches: [],
+                  error: `No regions found matching "${query}"`,
+                  common_codes: [
+                    { code: "0180", name: "Stockholm" },
+                    { code: "1480", name: "Gothenburg (Göteborg)" },
+                    { code: "1280", name: "Malmö" },
+                    { code: "1484", name: "Lerum" },
+                    { code: "0380", name: "Uppsala" }
+                  ],
+                  source_table: {
+                    id: targetTableId,
+                    name: metadata.label
+                  },
+                  suggestion: `Use scb_get_table_variables with tableId="${targetTableId}" and variableName="Region" to see all available regions`
+                }, null, 2)
               },
             ],
           };
         }
 
-        const suggestions = partialMatches.map(([code, index]) => 
-          `- **${code}**: ${regionLabels[code] || 'Unknown region'}`
-        ).join('\n');
+        const partialResults = partialMatches.map(([code, index]) => ({
+          code,
+          name: regionLabels[code] || 'Unknown region',
+          match_type: 'partial'
+        }));
 
         return {
           content: [
             {
               type: 'text',
-              text: `**Region Code Search for "${query}"**
-
-❓ No exact match found, but here are similar regions:
-
-${suggestions}
-
-💡 **Usage:** Use the region code in your data selection like: \`{"Region": ["${partialMatches[0][0]}"]}\``,
+              text: JSON.stringify({
+                query: query,
+                matches: partialResults,
+                match_type: 'partial_matches',
+                primary_match: partialResults[0],
+                usage_example: { Region: [partialResults[0].code] },
+                source_table: {
+                  id: targetTableId,
+                  name: metadata.label
+                }
+              }, null, 2)
             },
           ],
         };
       }
 
       // Found exact or close matches
-      const results = matches.slice(0, 5).map(([code, index]) => 
-        `- **${code}**: ${regionLabels[code] || 'Unknown region'}`
-      ).join('\n');
+      const exactResults = exactMatches.slice(0, 5).map(([code, index]) => ({
+        code,
+        name: regionLabels[code] || 'Unknown region',
+        match_type: 'exact'
+      }));
 
-      const primaryMatch = matches[0];
-      const usageExample = `{"Region": ["${primaryMatch[0]}"]}`;
+      const structuredData = {
+        query: query,
+        matches: exactResults,
+        match_type: 'exact_matches',
+        total_matches: exactMatches.length,
+        primary_match: exactResults[0],
+        usage_example: { Region: [exactResults[0].code] },
+        source_table: {
+          id: targetTableId,
+          name: metadata.label
+        }
+      };
+
+      const summary = `**🎯 Region Code Found for "${query}"**
+
+✅ **Primary Match:** ${exactResults[0].code} - ${exactResults[0].name}
+
+**All Matches:**
+${exactResults.map(r => `- **${r.code}**: ${r.name}`).join('\n')}
+
+💡 **Usage Example:** \`{"Region": ["${exactResults[0].code}"]}\`
+
+📊 **Source:** ${metadata.label} (${targetTableId})${tableId ? '\n⚠️ **Note:** Searched in specified table for compatibility' : '\n💡 **Note:** Searched in default population table'}`;
 
       return {
         content: [
           {
             type: 'text',
-            text: `**Region Code Search for "${query}"**
-
-✅ **Found ${matches.length} matching region(s):**
-
-${results}
-
-💡 **Primary match:** "${primaryMatch[0]}" = ${regionLabels[primaryMatch[0]] || 'Unknown region'}
-
-🔧 **Usage in selection:** \`${usageExample}\`
-
-📊 **Source table:** ${metadata.label} (${tableId})`,
+            text: this.formatStructuredResponse(summary, structuredData)
           },
         ],
       };
@@ -896,11 +982,14 @@ ${results}
         content: [
           {
             type: 'text',
-            text: `**Region Code Search Error**
-
-❌ Failed to search for region codes: ${error instanceof Error ? error.message : String(error)}
-
-💡 **Fallback:** Try \`scb_search_regions\` to find relevant tables manually.`,
+            text: JSON.stringify({
+              error: {
+                type: "region_search_failed",
+                message: error instanceof Error ? error.message : String(error),
+                query: query,
+                fallback: "Try scb_search_regions to find relevant tables manually"
+              }
+            }, null, 2)
           },
         ],
       };
@@ -990,46 +1079,49 @@ ${Object.entries(selection).map(([key, values]) => `- ${key}: [${values.join(', 
       // Get a small sample of data
       const data = await this.apiClient.getTableData(tableId, previewSelection, language);
       
-      const totalValues = data.value?.filter(v => v !== null).length || 0;
-      const nullValues = data.value?.filter(v => v === null).length || 0;
+      // Transform to structured JSON data with preview flag
+      const structuredData = this.apiClient.transformToStructuredData(data, previewSelection);
       
-      // Show first few data points
-      const sampleSize = Math.min(5, totalValues);
-      const sampleData = data.value?.slice(0, sampleSize).map((value, index) => 
-        `${index + 1}. ${value !== null ? value.toLocaleString() : 'null'}`
-      ).join('\n') || 'No data available';
+      // Add preview metadata
+      const previewData = {
+        ...structuredData,
+        preview_info: {
+          is_preview: true,
+          original_selection: selection,
+          preview_selection: previewSelection,
+          note: "This is a limited preview. Use scb_get_table_data for full dataset."
+        }
+      };
 
-      const dimensionInfo = Object.entries(data.dimension).map(([varCode, varDef]) => {
-        const selectedCount = Object.keys(varDef.category.index).length;
-        const sampleValues = Object.keys(varDef.category.index).slice(0, 3).join(', ');
-        return `  **${varDef.label}** (${varCode}): ${selectedCount} values (${sampleValues}${selectedCount > 3 ? '...' : ''})`;
-      }).join('\n');
+      const summary = `**👀 Data Preview for ${tableId}**
+
+**Table:** ${structuredData.metadata.table_name}
+**Preview Records:** ${structuredData.summary.total_records.toLocaleString()} data points (limited sample)
+
+${selection ? `**Original Selection:**
+${Object.entries(selection).map(([key, values]) => `- ${key}: ${values.join(', ')}`).join('\n')}
+
+**Preview Selection:**
+${Object.entries(previewSelection || {}).map(([key, values]) => `- ${key}: ${values.join(', ')}`).join('\n')}` : '**Full Dataset Preview**'}
+
+**Sample Data:**
+${structuredData.data.slice(0, 5).map(record => {
+  const mainValue = record.value ? `Value: ${record.value}` : '';
+  const otherFields = Object.entries(record)
+    .filter(([key]) => key !== 'value')
+    .map(([key, val]) => `${key}: ${val}`)
+    .slice(0, 2)
+    .join(', ');
+  return `- ${otherFields}${mainValue ? `, ${mainValue}` : ''}`;
+}).join('\n')}
+
+✅ **Preview looks good!** Use \`scb_get_table_data\` for the complete dataset.`;
 
       return {
         content: [
           {
             type: 'text',
-            text: `**📊 Data Preview for ${data.label}** (${tableId})
-
-✅ **Selection worked!** Here's a sample of your data:
-
-**Preview Summary:**
-- Total data points: ${totalValues.toLocaleString()}
-- Null values: ${nullValues.toLocaleString()}
-- Data shape: ${data.size.join(' × ')}
-
-**Selected Dimensions:**
-${dimensionInfo}
-
-**Sample Values:**
-${sampleData}
-
-**💡 Next steps:**
-- If this looks correct, use \`scb_get_table_data\` for the full dataset
-- Adjust your selection if needed and test again with \`scb_test_selection\`
-- Consider using expressions like \`TOP(10)\` to limit large datasets
-
-${data.updated ? `**Last Updated:** ${new Date(data.updated).toLocaleDateString()}` : ''}`,
+            text: this.formatStructuredResponse(summary, previewData)
           },
         ],
       };
@@ -1038,16 +1130,17 @@ ${data.updated ? `**Last Updated:** ${new Date(data.updated).toLocaleDateString(
         content: [
           {
             type: 'text',
-            text: `**📊 Data Preview Failed**
-
-❌ Could not preview data: ${error instanceof Error ? error.message : String(error)}
-
-**🔧 Troubleshooting:**
-1. Use \`scb_test_selection\` to validate your selection first
-2. Check variable names with \`scb_get_table_variables\`
-3. Verify region codes with \`scb_find_region_code\`
-
-**💡 The preview failed, but your full data request might still work if you fix the selection.**`,
+            text: JSON.stringify({
+              error: {
+                type: "preview_failed",
+                message: error instanceof Error ? error.message : String(error),
+                troubleshooting: [
+                  "Use scb_test_selection to validate your selection first",
+                  "Check variable names with scb_get_table_variables", 
+                  "Verify region codes with scb_find_region_code"
+                ]
+              }
+            }, null, 2)
           },
         ],
       };

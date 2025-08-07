@@ -16,12 +16,19 @@ This project creates a bridge between Claude Desktop and Statistics Sweden's ext
 
 ## 🚀 New & Improved Features
 
-### ✨ **Major UX Improvements**
-- **Smart Region Discovery**: `scb_find_region_code("Lerum")` → Returns "1484" with usage example
+### ✨ **Major UX Improvements (v3.0.0)**
+- **Structured JSON Data Returns**: All data tools now return pure JSON instead of text summaries
+- **Smart Region Discovery**: `scb_find_region_code("Lerum")` → Returns structured JSON with "1484" code and metadata
 - **Intelligent Variable Translation**: Use `region`, `age`, `year` - automatically converted to `Region`, `Alder`, `Tid`
 - **Pre-flight Validation**: Test selections before API calls with `scb_test_selection`
 - **Safe Data Preview**: Sample data with `scb_preview_data` to verify selections work
 - **Enhanced Error Messages**: Specific guidance instead of generic "Bad Request" errors
+
+### 🔧 **Data Format Revolution**
+- **JSON-First Architecture**: No more parsing text responses - everything is structured JSON
+- **Consistent Data Structure**: All data tools follow the same JSON schema pattern
+- **Machine-Readable Output**: Perfect for programmatic analysis and integration
+- **Preserved Metadata**: Full context retained while eliminating human summaries
 
 ## 🏗️ How it Works
 
@@ -133,12 +140,14 @@ Get detailed metadata about a specific table.
 Example: "Get information about table BE0101N1"
 ```
 
-### 5. `scb_get_table_data`
-Retrieve statistical data with intelligent validation.
+### 5. `scb_get_table_data` ⭐ **NOW RETURNS STRUCTURED JSON**
+Retrieve statistical data as pure JSON with intelligent validation.
 - **Enhanced**: Pre-validation and auto-translation
 - **Smart errors**: Provides specific guidance when queries fail
+- **Structured Output**: Returns `{query, data, metadata, summary}` JSON instead of text
 ```
 Example: "Get population data for Stockholm from table BE0101N1"
+→ Returns: JSON with structured data records, metadata, and query info
 ```
 
 ### 6. `scb_check_usage`
@@ -151,10 +160,11 @@ Example: "Check my current SCB API usage"
 
 ### 🆕 **NEW: Smart Discovery Tools**
 
-### 7. `scb_find_region_code` ⭐ **GAME CHANGER**
-Find the exact region code for any municipality or area.
+### 7. `scb_find_region_code` ⭐ **GAME CHANGER - NOW JSON**
+Find the exact region code for any municipality or area as structured JSON.
 ```
-Example: "What's the region code for Lerum?" → Returns "1484" with usage example
+Example: "What's the region code for Lerum?" 
+→ Returns: {"query": "Lerum", "matches": [{"code": "1484", "name": "Lerum", "match_type": "exact"}], "usage_example": {"Region": ["1484"]}}
 ```
 
 ### 8. `scb_search_regions` 
@@ -163,10 +173,11 @@ Find region-related tables when you need broader region exploration.
 Example: "Find tables with region data for Stockholm"
 ```
 
-### 9. `scb_get_table_variables` ⭐ **ESSENTIAL**
-View all available variables and their possible values before fetching data.
+### 9. `scb_get_table_variables` ⭐ **ESSENTIAL - NOW JSON**
+View all available variables and their possible values as structured JSON.
 ```
 Example: "Show me what variables are available in table TAB1267"
+→ Returns: {"table_id": "TAB1267", "variables": [{"variable_code": "Region", "total_values": 312, "sample_values": [...]}]}
 ```
 
 ---
@@ -179,10 +190,65 @@ Test if a data selection is valid WITHOUT making an API request.
 Example: Test {"region": ["1484"], "year": ["2024"]} before requesting data
 ```
 
-### 11. `scb_preview_data` ⭐ **SAFE TESTING**
-Get a small preview of data to verify your selection works correctly.
+### 11. `scb_preview_data` ⭐ **SAFE TESTING - NOW JSON**
+Get a small preview of data as structured JSON to verify your selection works correctly.
 ```
 Example: Preview population data for Lerum before requesting full dataset
+→ Returns: {"data": [{"region_code": "1484", "region_name": "Lerum", "value": 12345}], "preview_info": {"is_preview": true}}
+```
+
+## 📊 **New JSON Data Structure**
+
+All data-returning tools now provide structured JSON instead of text summaries:
+
+### Data Tool Response Format
+```json
+{
+  "query": {
+    "selection": {"Region": ["1484"], "Tid": ["2024"]},
+    "table_id": "TAB1267",
+    "requested_at": "2024-01-01T10:00:00Z"
+  },
+  "data": [
+    {
+      "region_code": "1484",
+      "region_name": "Lerum", 
+      "year_code": "2024",
+      "year_name": "2024",
+      "value": 43521
+    }
+  ],
+  "metadata": {
+    "source": "Statistics Sweden",
+    "updated": "2024-01-01",
+    "table_name": "Population by region and year",
+    "dimensions": [...]
+  },
+  "summary": {
+    "total_records": 1,
+    "non_null_records": 1,
+    "has_data": true
+  }
+}
+```
+
+### Variable Tool Response Format
+```json
+{
+  "table_id": "TAB1267",
+  "variables": [
+    {
+      "variable_code": "Region",
+      "variable_name": "region", 
+      "total_values": 312,
+      "sample_values": [
+        {"code": "1484", "label": "Lerum", "index": 0}
+      ],
+      "usage_example": {"Region": ["1484"]}
+    }
+  ],
+  "metadata": {...}
+}
 ```
 
 ## 💡 Usage Examples
@@ -352,7 +418,28 @@ npm run test-full
 
 ## 🎉 Changelog
 
-### v2.0.0 - Major UX Improvements (Latest)
+### v3.0.0 - Structured JSON Data Returns (Latest)
+**🚀 BREAKING: Pure JSON data responses - no more text parsing!**
+
+#### 🔧 **Revolutionary Data Format Changes**
+- **All data tools now return structured JSON** instead of text summaries
+- **`scb_get_table_data`**: Returns `{query, data, metadata, summary}` JSON structure
+- **`scb_preview_data`**: Returns structured data sample with preview metadata  
+- **`scb_get_table_variables`**: Returns complete variable definitions as JSON
+- **`scb_find_region_code`**: Returns structured region matches with usage examples
+- **Consistent JSON schemas** across all data-returning tools
+
+#### 🎯 **What Changed**
+- **BEFORE**: "**Population data for Lerum:** 43,521 people in 2024..." (text summary)
+- **AFTER**: `{"data": [{"region_code": "1484", "region_name": "Lerum", "value": 43521}]}` (structured JSON)
+
+#### ✅ **Benefits**
+- **Machine-readable**: Perfect for programmatic analysis and integration
+- **No parsing needed**: Direct access to structured data
+- **Preserved context**: Full metadata retained without human summaries
+- **Consistent format**: All tools follow the same JSON schema pattern
+
+### v2.0.0 - Major UX Improvements 
 **🚀 BREAKING: Completely solved the user experience issues!**
 
 #### ✨ **NEW: Smart Discovery Tools**
