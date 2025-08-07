@@ -456,31 +456,90 @@ ${contents}
       });
     }
     
-    const tables = filteredTables.slice(0, args.pageSize || 20).map(table => 
-      `📊 **${table.label}** (${table.id})
-   📅 Period: ${table.firstPeriod} - ${table.lastPeriod}
-   📝 Variables: ${table.variableNames?.join(', ') || 'N/A'}
-   📈 Updated: ${table.updated ? new Date(table.updated).toLocaleDateString() : 'N/A'}
-   🏢 Source: ${table.source || 'N/A'}${table.discontinued ? '\n   ⚠️ DISCONTINUED' : ''}`
-    ).join('\n\n');
+    const displayTables = filteredTables.slice(0, args.pageSize || 20);
+    
+    // Transform to structured data
+    const structuredData = {
+      query: {
+        search_term: args.query || null,
+        category_filter: args.category || null,
+        page_size: args.pageSize || 20,
+        page_number: result.page.pageNumber,
+        language: args.language || 'en'
+      },
+      tables: displayTables.map(table => ({
+        id: table.id,
+        title: table.label,
+        description: table.description || null,
+        period: {
+          start: table.firstPeriod || null,
+          end: table.lastPeriod || null
+        },
+        variables: table.variableNames || [],
+        updated: table.updated || null,
+        source: table.source || null,
+        discontinued: table.discontinued || false,
+        category: table.category || null
+      })),
+      pagination: {
+        current_page: result.page.pageNumber,
+        total_pages: result.page.totalPages,
+        total_results: result.page.totalElements,
+        page_size: result.page.pageSize
+      },
+      metadata: {
+        total_filtered: filteredTables.length,
+        total_unfiltered: result.tables.length,
+        has_category_filter: !!args.category
+      }
+    };
 
-    let searchTips = '';
-    if (args.query && result.page.totalElements > 50) {
-      searchTips = `\n\n💡 **Search Tips:**
-- Try more specific terms: "${args.query} municipality" or "${args.query} region"
-- Use category filter: try adding \`category: "population"\` for demographic data
-- Browse folders with \`scb_browse_folders\` for better organization`;
+    // Create user-friendly summary with better category filtering feedback
+    let summary = `**🔍 Search Results** ${args.query ? `for "${args.query}"` : ''}${args.category ? ` (${args.category} category)` : ''}
+
+**Found:** ${result.page.totalElements.toLocaleString()} tables${args.category ? ` (${filteredTables.length} match category filter)` : ''} (showing ${displayTables.length})
+
+**Top Results:**`;
+
+    if (displayTables.length === 0 && args.category && result.tables.length > 0) {
+      // Category filter removed all results - provide helpful feedback
+      summary += `
+
+❌ **No tables match the "${args.category}" category filter**
+
+The search found ${result.tables.length} table(s), but none match the "${args.category}" category criteria.
+
+**💡 Suggestions:**
+- Try removing the category filter: search without \`category="${args.category}"\`
+- Use broader search terms like "${args.category}" instead of "${args.query}"
+- Try related terms: ${args.category === 'population' ? '"befolkning", "demographic", or "region"' : `different ${args.category}-related terms`}
+
+**🔍 What was found:**
+${result.tables.slice(0, 3).map(table => `• ${table.label} (${table.id})`).join('\n')}${result.tables.length > 3 ? `\n• ... and ${result.tables.length - 3} more` : ''}`;
+    } else if (displayTables.length > 0) {
+      summary += `
+${displayTables.slice(0, 5).map(table => 
+  `📊 **${table.label}** (${table.id})
+  - Period: ${table.firstPeriod} - ${table.lastPeriod}
+  - Variables: ${(table.variableNames || []).slice(0, 3).join(', ')}${(table.variableNames?.length || 0) > 3 ? '...' : ''}
+  - Updated: ${table.updated ? new Date(table.updated).toLocaleDateString() : 'N/A'}${table.discontinued ? ' ⚠️ DISCONTINUED' : ''}`
+).join('\n\n')}`;
     }
+
+    summary += `
+
+📍 **Page ${result.page.pageNumber} of ${result.page.totalPages}**
+
+${result.page.totalElements > 50 ? `💡 **Search Tips:**
+- Try more specific terms: "${args.query || 'keyword'} municipality"
+- Use category filters: population, labour, economy, housing
+- Browse folders with \`scb_browse_folders\` for organized view` : ''}`;
 
     return {
       content: [
         {
           type: 'text',
-          text: `**Search Results** ${args.query ? `for "${args.query}"` : ''}${args.category ? ` (${args.category} category)` : ''}
-
-${tables}
-
-📍 *Page ${result.page.pageNumber} of ${result.page.totalPages} (${result.page.totalElements} total results)*${searchTips}`,
+          text: this.formatStructuredResponse(summary, structuredData)
         },
       ],
     };

@@ -321,6 +321,16 @@ export class SCBApiClient {
       
       const availableVariables = Object.keys(metadata.dimension);
       
+      // Check for missing mandatory dimensions
+      const selectedVariables = Object.keys(translatedSelection);
+      const missingVariables = availableVariables.filter(varName => !selectedVariables.includes(varName));
+      
+      if (missingVariables.length > 0) {
+        errors.push(`Missing mandatory variables: ${missingVariables.join(', ')}`);
+        suggestions.push(`SCB tables require all dimensions to be specified. Add these variables to your selection: ${missingVariables.join(', ')}`);
+        suggestions.push(`Use "*" as value to select all values for a dimension, e.g. {"${missingVariables[0]}": ["*"]}`);
+      }
+
       // Check each variable in translated selection
       for (const [varCode, values] of Object.entries(translatedSelection)) {
         // Check if variable exists
@@ -417,6 +427,7 @@ export class SCBApiClient {
       variableCode: variableCode,
       valueCodes: Array.isArray(valueCodes) ? valueCodes : [valueCodes]
     }));
+
 
     const response = await fetch(url, {
       method: 'POST',
