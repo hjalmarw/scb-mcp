@@ -86,6 +86,15 @@ class SCBMCPServer {
           case 'scb_get_table_variables':
             return await this.handleGetTableVariables(args as any);
 
+          case 'scb_find_region_code':
+            return await this.handleFindRegionCode(args as any);
+
+          case 'scb_test_selection':
+            return await this.handleTestSelection(args as any);
+
+          case 'scb_preview_data':
+            return await this.handlePreviewData(args as any);
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -262,6 +271,79 @@ class SCBMCPServer {
             variableName: {
               type: 'string',
               description: 'Optional: Show values for specific variable only (e.g., "region")',
+            },
+          },
+          required: ['tableId'],
+        },
+      },
+      {
+        name: 'scb_find_region_code',
+        description: 'Find the exact region code for a specific municipality or area (improved region lookup)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Municipality or region name (e.g., "Lerum", "Stockholm", "Gothenburg")',
+            },
+            language: {
+              type: 'string',
+              description: 'Language code (en, sv)',
+              default: 'en',
+            },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'scb_test_selection',
+        description: 'Test if a data selection is valid without retrieving data (prevents API errors)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tableId: {
+              type: 'string',
+              description: 'Table ID (e.g., "TAB1267")',
+            },
+            selection: {
+              type: 'object',
+              description: 'Variable selection to test',
+              additionalProperties: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+            language: {
+              type: 'string',
+              description: 'Language code (en, sv)',
+              default: 'en',
+            },
+          },
+          required: ['tableId', 'selection'],
+        },
+      },
+      {
+        name: 'scb_preview_data',
+        description: 'Get a small preview of data to verify selection works (safer than full data request)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tableId: {
+              type: 'string',
+              description: 'Table ID (e.g., "TAB1267")',
+            },
+            selection: {
+              type: 'object',
+              description: 'Variable selection (automatically limited to small sample)',
+              additionalProperties: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+            language: {
+              type: 'string',
+              description: 'Language code (en, sv)',
+              default: 'en',
             },
           },
           required: ['tableId'],
@@ -659,6 +741,317 @@ ${variableDetails}${usageTips}`,
         },
       ],
     };
+  }
+
+  private async handleFindRegionCode(args: { query: string; language?: string }) {
+    const { query, language = 'en' } = args;
+    
+    try {
+      // Look for a common population table that has region data
+      const searchResults = await this.apiClient.searchTables({
+        query: 'population municipality region',
+        pageSize: 10,
+        lang: language
+      });
+
+      // Find tables with Region variable
+      const regionTables = searchResults.tables.filter(table => 
+        table.variableNames?.some(v => v.toLowerCase().includes('region')) &&
+        (table.label.toLowerCase().includes('population') || table.label.toLowerCase().includes('befolkning'))
+      );
+
+      if (regionTables.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `**Region Code Search for "${query}"**
+
+❌ Could not find suitable regional tables to lookup codes.
+
+💡 **Alternative approach:**
+Try using \`scb_search_regions\` to find relevant tables, then use \`scb_get_table_variables\` to explore region codes.
+
+🔍 **Common municipality codes:**
+- Stockholm: 0180
+- Gothenburg: 1480  
+- Malmö: 1280
+- Lerum: 1484`,
+            },
+          ],
+        };
+      }
+
+      // Use the first suitable table to get region information
+      const tableId = regionTables[0].id;
+      const metadata = await this.apiClient.getTableMetadata(tableId, language);
+      
+      if (!metadata.dimension || !metadata.dimension['Region']) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `**Region Code Search for "${query}"**
+
+❌ Could not access region data from table ${tableId}.
+
+💡 Try using \`scb_get_table_variables\` with tableId="${tableId}" to explore available regions manually.`,
+            },
+          ],
+        };
+      }
+
+      const regionDimension = metadata.dimension['Region'];
+      const regionEntries = Object.entries(regionDimension.category.index);
+      const regionLabels = regionDimension.category.label || {};
+
+      // Search for the query in region labels and codes
+      const matches = regionEntries.filter(([code, index]) => {
+        const label = regionLabels[code] || '';
+        return label.toLowerCase().includes(query.toLowerCase()) ||
+               code.toLowerCase().includes(query.toLowerCase());
+      });
+
+      if (matches.length === 0) {
+        // Do a fuzzy search for partial matches
+        const partialMatches = regionEntries.filter(([code, index]) => {
+          const label = regionLabels[code] || '';
+          const queryWords = query.toLowerCase().split(' ');
+          return queryWords.some(word => 
+            label.toLowerCase().includes(word) || code.includes(word)
+          );
+        }).slice(0, 10);
+
+        if (partialMatches.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `**Region Code Search for "${query}"**
+
+❌ No regions found matching "${query}".
+
+💡 **Try these common municipality codes:**
+- Stockholm: 0180
+- Gothenburg (Göteborg): 1480  
+- Malmö: 1280
+- Lerum: 1484
+- Uppsala: 0380
+
+🔍 Use \`scb_get_table_variables\` with tableId="${tableId}" and variableName="Region" to see all available regions.`,
+              },
+            ],
+          };
+        }
+
+        const suggestions = partialMatches.map(([code, index]) => 
+          `- **${code}**: ${regionLabels[code] || 'Unknown region'}`
+        ).join('\n');
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `**Region Code Search for "${query}"**
+
+❓ No exact match found, but here are similar regions:
+
+${suggestions}
+
+💡 **Usage:** Use the region code in your data selection like: \`{"Region": ["${partialMatches[0][0]}"]}\``,
+            },
+          ],
+        };
+      }
+
+      // Found exact or close matches
+      const results = matches.slice(0, 5).map(([code, index]) => 
+        `- **${code}**: ${regionLabels[code] || 'Unknown region'}`
+      ).join('\n');
+
+      const primaryMatch = matches[0];
+      const usageExample = `{"Region": ["${primaryMatch[0]}"]}`;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `**Region Code Search for "${query}"**
+
+✅ **Found ${matches.length} matching region(s):**
+
+${results}
+
+💡 **Primary match:** "${primaryMatch[0]}" = ${regionLabels[primaryMatch[0]] || 'Unknown region'}
+
+🔧 **Usage in selection:** \`${usageExample}\`
+
+📊 **Source table:** ${metadata.label} (${tableId})`,
+          },
+        ],
+      };
+
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `**Region Code Search Error**
+
+❌ Failed to search for region codes: ${error instanceof Error ? error.message : String(error)}
+
+💡 **Fallback:** Try \`scb_search_regions\` to find relevant tables manually.`,
+          },
+        ],
+      };
+    }
+  }
+
+  private async handleTestSelection(args: { tableId: string; selection: Record<string, string[]>; language?: string }) {
+    const { tableId, selection, language = 'en' } = args;
+    
+    try {
+      // Use the existing validation logic
+      const validation = await this.apiClient.validateSelection(tableId, selection, language);
+      
+      const statusIcon = validation.isValid ? '✅' : '❌';
+      const statusText = validation.isValid ? 'VALID' : 'INVALID';
+      
+      let responseText = `**Selection Validation for ${tableId}**
+
+${statusIcon} **Status:** ${statusText}
+
+**Your selection:**
+${Object.entries(selection).map(([key, values]) => `- ${key}: [${values.join(', ')}]`).join('\n')}`;
+
+      if (!validation.isValid) {
+        responseText += `\n\n**❌ Errors:**\n${validation.errors.map(e => `- ${e}`).join('\n')}`;
+      }
+
+      if (validation.suggestions.length > 0) {
+        responseText += `\n\n**💡 Suggestions:**\n${validation.suggestions.map(s => `- ${s}`).join('\n')}`;
+      }
+
+      if (validation.translatedSelection && JSON.stringify(validation.translatedSelection) !== JSON.stringify(selection)) {
+        responseText += `\n\n**🔄 Translated selection:**\n${Object.entries(validation.translatedSelection).map(([key, values]) => `- ${key}: [${values.join(', ')}]`).join('\n')}`;
+      }
+
+      if (validation.isValid) {
+        responseText += `\n\n**✅ This selection should work with \`scb_get_table_data\` or \`scb_preview_data\`!**`;
+      } else {
+        responseText += `\n\n**🔧 Fix the errors above before requesting data.**`;
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: responseText,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `**Selection Test Failed**
+
+❌ Could not validate selection: ${error instanceof Error ? error.message : String(error)}
+
+💡 Check that the table ID is correct and try again.`,
+          },
+        ],
+      };
+    }
+  }
+
+  private async handlePreviewData(args: { tableId: string; selection?: Record<string, string[]>; language?: string }) {
+    const { tableId, selection, language = 'en' } = args;
+    
+    try {
+      // Create a limited selection for preview
+      let previewSelection = selection;
+      
+      if (selection) {
+        // Limit each variable to at most 3 values or use special expressions
+        previewSelection = {};
+        for (const [key, values] of Object.entries(selection)) {
+          if (values.some(v => v === '*' || v.startsWith('TOP(') || v.startsWith('BOTTOM('))) {
+            // Replace * with TOP(3) for preview, keep other expressions
+            previewSelection[key] = values.map(v => v === '*' ? 'TOP(3)' : v);
+          } else {
+            // Limit to first 3 values
+            previewSelection[key] = values.slice(0, 3);
+          }
+        }
+      }
+
+      // Get a small sample of data
+      const data = await this.apiClient.getTableData(tableId, previewSelection, language);
+      
+      const totalValues = data.value?.filter(v => v !== null).length || 0;
+      const nullValues = data.value?.filter(v => v === null).length || 0;
+      
+      // Show first few data points
+      const sampleSize = Math.min(5, totalValues);
+      const sampleData = data.value?.slice(0, sampleSize).map((value, index) => 
+        `${index + 1}. ${value !== null ? value.toLocaleString() : 'null'}`
+      ).join('\n') || 'No data available';
+
+      const dimensionInfo = Object.entries(data.dimension).map(([varCode, varDef]) => {
+        const selectedCount = Object.keys(varDef.category.index).length;
+        const sampleValues = Object.keys(varDef.category.index).slice(0, 3).join(', ');
+        return `  **${varDef.label}** (${varCode}): ${selectedCount} values (${sampleValues}${selectedCount > 3 ? '...' : ''})`;
+      }).join('\n');
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `**📊 Data Preview for ${data.label}** (${tableId})
+
+✅ **Selection worked!** Here's a sample of your data:
+
+**Preview Summary:**
+- Total data points: ${totalValues.toLocaleString()}
+- Null values: ${nullValues.toLocaleString()}
+- Data shape: ${data.size.join(' × ')}
+
+**Selected Dimensions:**
+${dimensionInfo}
+
+**Sample Values:**
+${sampleData}
+
+**💡 Next steps:**
+- If this looks correct, use \`scb_get_table_data\` for the full dataset
+- Adjust your selection if needed and test again with \`scb_test_selection\`
+- Consider using expressions like \`TOP(10)\` to limit large datasets
+
+${data.updated ? `**Last Updated:** ${new Date(data.updated).toLocaleDateString()}` : ''}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `**📊 Data Preview Failed**
+
+❌ Could not preview data: ${error instanceof Error ? error.message : String(error)}
+
+**🔧 Troubleshooting:**
+1. Use \`scb_test_selection\` to validate your selection first
+2. Check variable names with \`scb_get_table_variables\`
+3. Verify region codes with \`scb_find_region_code\`
+
+**💡 The preview failed, but your full data request might still work if you fix the selection.**`,
+          },
+        ],
+      };
+    }
   }
 
   async run() {

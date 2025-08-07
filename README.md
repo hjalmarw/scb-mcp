@@ -7,9 +7,21 @@ A Model Context Protocol (MCP) server that provides Claude Desktop with seamless
 This project creates a bridge between Claude Desktop and Statistics Sweden's extensive statistical database. It allows Claude to:
 - Access official Swedish statistics on population, economy, labor market, education, and more
 - Search and navigate through thousands of statistical tables
+- **Find region codes by name** - No more guessing municipality codes!
 - Retrieve specific data with intelligent filtering
-- Handle Swedish/English language translations automatically
-- Validate queries before making API calls to prevent errors
+- **Auto-translate variable names** - Use English terms that get converted to Swedish API format
+- **Validate queries before making API calls** to prevent errors and wasted requests
+- **Get actionable error messages** with specific guidance when things go wrong
+- **Preview data safely** before making large requests
+
+## 🚀 New & Improved Features
+
+### ✨ **Major UX Improvements**
+- **Smart Region Discovery**: `scb_find_region_code("Lerum")` → Returns "1484" with usage example
+- **Intelligent Variable Translation**: Use `region`, `age`, `year` - automatically converted to `Region`, `Alder`, `Tid`
+- **Pre-flight Validation**: Test selections before API calls with `scb_test_selection`
+- **Safe Data Preview**: Sample data with `scb_preview_data` to verify selections work
+- **Enhanced Error Messages**: Specific guidance instead of generic "Bad Request" errors
 
 ## 🏗️ How it Works
 
@@ -28,10 +40,10 @@ The server acts as an intelligent middleware that:
 
 ### Key Components
 
-- **`src/index.ts`**: Main MCP server implementation with 8 specialized tools
-- **`src/api-client.ts`**: SCB API client with rate limiting and validation
+- **`src/index.ts`**: Main MCP server implementation with **11 specialized tools**
+- **`src/api-client.ts`**: SCB API client with rate limiting, validation, and smart translation
 - **`src/types.ts`**: TypeScript schemas for data validation using Zod
-- **Built-in intelligence**: Pre-validation, translation, and error recovery
+- **Built-in intelligence**: Pre-validation, bidirectional translation, and error recovery
 
 ## 📦 Installation
 
@@ -91,7 +103,9 @@ Add to your Claude Desktop configuration file:
 
 5. **Restart Claude Desktop** to load the new server
 
-## 🛠️ Available Tools
+## 🛠️ Available Tools (11 Total)
+
+### Core Tools
 
 ### 1. `scb_get_api_status`
 Get API configuration and current rate limit status.
@@ -107,67 +121,119 @@ Example: "Browse population statistics folders"
 
 ### 3. `scb_search_tables`
 Search for statistical tables with enhanced filtering.
-- **NEW**: Category filtering for better results
+- **Enhanced**: Category filtering for better results
 - **Smart search**: Suggests more specific queries when needed
 ```
 Example: "Search for unemployment statistics in the labour category"
 ```
 
-### 4. `scb_search_regions` 🆕
-Find region codes by name - essential for location-specific queries.
-```
-Example: "Find the region code for Lerum municipality"
-```
-
-### 5. `scb_get_table_info`
+### 4. `scb_get_table_info`
 Get detailed metadata about a specific table.
 ```
 Example: "Get information about table BE0101N1"
 ```
 
-### 6. `scb_get_table_variables` 🆕
-View available variables and their possible values before fetching data.
-```
-Example: "Show me what variables are available in table TAB6534"
-```
-
-### 7. `scb_get_table_data`
+### 5. `scb_get_table_data`
 Retrieve statistical data with intelligent validation.
-- **Pre-validation**: Checks selections before API calls
-- **Auto-translation**: Handles Swedish variable names
+- **Enhanced**: Pre-validation and auto-translation
 - **Smart errors**: Provides specific guidance when queries fail
 ```
 Example: "Get population data for Stockholm from table BE0101N1"
 ```
 
-### 8. `scb_check_usage`
+### 6. `scb_check_usage`
 Monitor API usage and rate limits.
 ```
 Example: "Check my current SCB API usage"
 ```
 
+---
+
+### 🆕 **NEW: Smart Discovery Tools**
+
+### 7. `scb_find_region_code` ⭐ **GAME CHANGER**
+Find the exact region code for any municipality or area.
+```
+Example: "What's the region code for Lerum?" → Returns "1484" with usage example
+```
+
+### 8. `scb_search_regions` 
+Find region-related tables when you need broader region exploration.
+```
+Example: "Find tables with region data for Stockholm"
+```
+
+### 9. `scb_get_table_variables` ⭐ **ESSENTIAL**
+View all available variables and their possible values before fetching data.
+```
+Example: "Show me what variables are available in table TAB1267"
+```
+
+---
+
+### 🛡️ **NEW: Error Prevention Tools**
+
+### 10. `scb_test_selection` ⭐ **MUST USE**
+Test if a data selection is valid WITHOUT making an API request.
+```
+Example: Test {"region": ["1484"], "year": ["2024"]} before requesting data
+```
+
+### 11. `scb_preview_data` ⭐ **SAFE TESTING**
+Get a small preview of data to verify your selection works correctly.
+```
+Example: Preview population data for Lerum before requesting full dataset
+```
+
 ## 💡 Usage Examples
 
-### Basic Workflow
+### 🎯 **Recommended Workflow (Beginner-Friendly)**
 
-1. **Find relevant data**
-```
-"Search for population statistics about municipalities"
-```
+#### **The "Lerum Demographics" Example** 
+*This exact scenario used to fail - now it works perfectly!*
 
-2. **Get region codes**
+1. **Find your region code**
 ```
-"What's the region code for Gothenburg?"
-```
-
-3. **Explore table structure**
-```
-"Show me the variables in table BE0101N1"
+"What's the region code for Lerum municipality?"
+→ scb_find_region_code returns: "1484" with usage example
 ```
 
-4. **Retrieve specific data**
+2. **Find relevant tables**
 ```
-"Get population data for region 1480 for the years 2020-2024"
+"Search for population tables with demographics"
+→ Returns tables like TAB1267 (Population by region, age and sex)
+```
+
+3. **Explore table structure** 
+```
+"Show me the variables available in table TAB1267"
+→ See: Region (312 values), Alder (102 age groups), Kon (2 sexes), Tid (years)
+```
+
+4. **Test your selection safely**
+```
+"Test this selection: region=1484, age=all, sex=all, year=2024"
+→ scb_test_selection validates and shows any issues
+```
+
+5. **Preview data before full request**
+```
+"Preview population data for Lerum in 2024" 
+→ scb_preview_data returns sample to verify it works
+```
+
+6. **Get the full dataset**
+```
+"Get complete population data for Lerum by age and sex for 2024"
+→ Returns comprehensive demographic data
+```
+
+### 🚀 **Advanced Workflow**
+
+1. **Smart variable names** - Use English terms that auto-translate:
+```
+"Get data where region=Lerum, age=total, sex=male, year=2024"
+→ Automatically converts: region→Region, age→Alder, sex→Kon, year→Tid
 ```
 
 ### Advanced Features
@@ -246,36 +312,73 @@ npm run test-full
 - **Data limit**: 150,000 cells per request
 - **Auto-recovery**: Server tracks and respects limits
 
-### Best Practices
-1. **Use specific selections** instead of requesting all data
-2. **Check table variables first** with `scb_get_table_variables`
-3. **Validate region codes** with `scb_search_regions`
-4. **Monitor usage** with `scb_check_usage`
-5. **Handle errors gracefully** - the server provides specific guidance
+### 🎯 **NEW: Best Practices (Updated)**
+1. **Start with region codes**: Use `scb_find_region_code` to get exact codes
+2. **Always test selections first**: Use `scb_test_selection` before requesting data  
+3. **Preview before full requests**: Use `scb_preview_data` for verification
+4. **Use smart variable names**: English terms work - they auto-translate
+5. **Monitor usage**: Check `scb_check_usage` to avoid rate limits
 
-## 🐛 Troubleshooting
+## 🐛 Troubleshooting (Much Improved!)
 
-### Common Issues
+### ✅ **Problems That Are Now SOLVED**
 
-#### "Variable not found in table"
-- Use `scb_get_table_variables` to see exact variable names
-- Variable names are case-sensitive
-- Try the Swedish term if English doesn't work
+#### ~~"Variable not found in table"~~ → **FIXED!** 
+- ✅ **Use English variable names** - they auto-translate (`region`→`Region`, `age`→`Alder`)
+- ✅ **Get specific guidance** - errors now tell you exactly what to fix
+- ✅ **Test first** - `scb_test_selection` catches issues before API calls
+
+#### ~~"Region code not found"~~ → **FIXED!**
+- ✅ **Direct lookup** - `scb_find_region_code("Lerum")` returns exact codes
+- ✅ **No more guessing** - get codes with usage examples
+- ✅ **Multiple sources** - searches across different table classifications
+
+#### ~~"Bad request (400) with no guidance"~~ → **FIXED!**
+- ✅ **Specific error messages** - tells you if it's variables, values, or format
+- ✅ **Actionable suggestions** - points to exact tools to fix the issue
+- ✅ **Prevention tools** - validate before making requests
+
+### Remaining Common Issues
 
 #### "Rate limit exceeded"
 - Wait for the time window to reset (shown in error)
 - Use `scb_check_usage` to monitor quota
-- Reduce concurrent requests
+- Use `scb_preview_data` instead of full requests for testing
 
 #### "Too many data cells"
-- Use more specific selections
-- Break large requests into smaller chunks
-- Use expressions like `TOP(10)` to limit results
+- Use `scb_preview_data` to test with smaller selections first
+- Break large requests into chunks
+- Use expressions like `TOP(10)` or specific value lists
 
-#### "Region code not found"
-- Use `scb_search_regions` to find correct codes
-- Region codes are usually numeric (e.g., "1484" for Lerum)
-- Some tables use different region classifications
+## 🎉 Changelog
+
+### v2.0.0 - Major UX Improvements (Latest)
+**🚀 BREAKING: Completely solved the user experience issues!**
+
+#### ✨ **NEW: Smart Discovery Tools**
+- **`scb_find_region_code`**: Find exact region codes by municipality name
+- **`scb_get_table_variables`**: Explore all available variables before requesting data
+
+#### 🛡️ **NEW: Error Prevention Tools**  
+- **`scb_test_selection`**: Validate data selections without making API requests
+- **`scb_preview_data`**: Safe data sampling to verify selections work
+
+#### 🧠 **ENHANCED: Intelligent Features**
+- **Smart Variable Translation**: Auto-convert English↔Swedish (`region`→`Region`, `age`→`Alder`)
+- **Enhanced Error Messages**: Specific guidance with actionable suggestions
+- **Common Value Shortcuts**: Use `total`, `male`, `female` - automatically converted
+- **Improved Validation**: Pre-flight checks prevent wasted API calls
+
+#### 🔧 **IMPROVED: Developer Experience**
+- **Better Error Handling**: Parse 400 errors with specific troubleshooting steps
+- **Updated Documentation**: Comprehensive examples and workflow guides
+- **Enhanced Testing**: 11 tools total, all thoroughly tested
+
+### v1.0.0 - Initial Release
+- Basic MCP server implementation
+- 8 core tools for SCB API access
+- Rate limiting and usage monitoring
+- Swedish/English language support
 
 ## 📄 License
 

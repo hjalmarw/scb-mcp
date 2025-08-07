@@ -173,34 +173,119 @@ export class SCBApiClient {
   }
 
   private translateCommonVariables(selection: Record<string, string[]>, lang: string): Record<string, string[]> {
-    // Common Swedish -> English variable translations
-    const translations: Record<string, string> = {
-      'år': 'year',
-      'månad': 'month', 
-      'kön': 'sex',
-      'ålder': 'age',
-      'län': 'county',
-      'kommun': 'municipality',
-      'utbildning': 'education',
-      'sysselsättning': 'employment',
-      'inkomst': 'income',
-      'familjetyp': 'family_type',
-      'civilstånd': 'marital_status'
+    // Bidirectional variable name mappings (handles both directions and case variations)
+    const variableMapping: Record<string, string> = {
+      // Swedish -> English
+      'år': 'Tid',
+      'månad': 'Tid', 
+      'kön': 'Kon',
+      'ålder': 'Alder',
+      'län': 'Region',
+      'kommun': 'Region',
+      'utbildning': 'UtbildningsNiva',
+      'sysselsättning': 'Sysselsattning',
+      'inkomst': 'Inkomst',
+      'familjetyp': 'Familjetyp',
+      'civilstånd': 'Civilstand',
+      
+      // English -> Swedish (common API variable names)
+      'year': 'Tid',
+      'time': 'Tid',
+      'month': 'Tid',
+      'sex': 'Kon',
+      'gender': 'Kon',
+      'age': 'Alder',
+      'county': 'Region',
+      'municipality': 'Region',
+      'education': 'UtbildningsNiva',
+      'employment': 'Sysselsattning',
+      'income': 'Inkomst',
+      'family_type': 'Familjetyp',
+      'marital_status': 'Civilstand',
+      
+      // Case variations (lowercase -> proper case)
+      'region': 'Region',
+      'alder': 'Alder',
+      'kon': 'Kon',
+      'tid': 'Tid',
+      'utbildningsniva': 'UtbildningsNiva',
+      'sysselsattning': 'Sysselsattning',
+      'civilstand': 'Civilstand',
+      'contentscode': 'ContentsCode',
+      'observations': 'ContentsCode',  // Both can map to same API variable name
+      'contents': 'ContentsCode'
     };
 
-    // If using English language, try to translate Swedish terms
-    if (lang === 'en') {
-      const translatedSelection: Record<string, string[]> = {};
-      
-      for (const [key, values] of Object.entries(selection)) {
-        const translatedKey = translations[key.toLowerCase()] || key;
-        translatedSelection[translatedKey] = values;
-      }
-      
-      return translatedSelection;
+    const translatedSelection: Record<string, string[]> = {};
+    
+    for (const [key, values] of Object.entries(selection)) {
+      // Try exact match first, then lowercase match
+      const mappedKey = variableMapping[key] || variableMapping[key.toLowerCase()] || key;
+      translatedSelection[mappedKey] = values;
     }
     
-    return selection;
+    return translatedSelection;
+  }
+
+  private translateCommonValues(values: string[], variableName: string): string[] {
+    const valueMapping: Record<string, Record<string, string>> = {
+      // Age/Alder common values
+      'Alder': {
+        'total': 'tot',
+        'all': 'tot',
+        'totalt': 'tot',
+        'totals': 'TotSA', // Sometimes it's TotSA in certain tables
+      },
+      // Time/Tid common values
+      'Tid': {
+        'latest': '2024', // Fallback to recent year
+        'recent': '2024',
+        'current': '2024',
+      },
+      // Sex/Gender common values  
+      'Kon': {
+        'total': 'tot',
+        'all': 'tot',
+        'male': '1',
+        'female': '2',
+        'men': '1',
+        'women': '2',
+        'man': '1',
+        'woman': '2',
+      },
+      // General mappings for any variable
+      '*': {
+        'total': 'tot',
+        'all': '*',
+        'totalt': 'tot',
+        'alla': '*',
+      }
+    };
+
+    return values.map(value => {
+      // Check specific variable mapping first
+      const specificMapping = valueMapping[variableName];
+      if (specificMapping && specificMapping[value.toLowerCase()]) {
+        return specificMapping[value.toLowerCase()];
+      }
+      
+      // Check general mapping
+      const generalMapping = valueMapping['*'];
+      if (generalMapping && generalMapping[value.toLowerCase()]) {
+        return generalMapping[value.toLowerCase()];
+      }
+      
+      // Handle time format detection
+      if (variableName === 'Tid' && value.match(/^\d{4}$/)) {
+        // Year format is correct
+        return value;
+      } else if (variableName === 'Tid' && value.match(/^\d{4}-\d{2}$/)) {
+        // Convert YYYY-MM to YYYYMM format
+        return value.replace('-', 'M');
+      }
+      
+      return value;
+    });
   }
 
   async validateSelection(
@@ -211,7 +296,14 @@ export class SCBApiClient {
     try {
       // Try to translate common Swedish terms first
       const originalSelection = { ...selection };
-      const translatedSelection = this.translateCommonVariables(selection, lang);
+      let translatedSelection = this.translateCommonVariables(selection, lang);
+      
+      // Also translate common values
+      const finalSelection: Record<string, string[]> = {};
+      for (const [varName, values] of Object.entries(translatedSelection)) {
+        finalSelection[varName] = this.translateCommonValues(values, varName);
+      }
+      translatedSelection = finalSelection;
       
       // Get table metadata to validate against
       const metadata = await this.getTableMetadata(tableId, lang);
@@ -351,21 +443,52 @@ export class SCBApiClient {
         throw new Error(`Request forbidden (403). The query may result in too many data cells (limit: ${this.rateLimitInfo?.maxCalls || 'unknown'}). Try using more specific selections.`);
       }
       if (response.status === 400) {
-        // Parse 400 errors more specifically
-        let errorDetails = '';
+        // Parse 400 errors more specifically with actionable guidance
+        let errorMessage = 'Bad request (400)';
+        let troubleshootingTips = [];
+        
         try {
           const errorText = await response.text();
-          if (errorText.includes('variable') || errorText.includes('Variable')) {
-            errorDetails = ' - This usually means variable names or values in your selection are incorrect. Use scb_get_table_variables to check valid options.';
-          } else if (errorText.includes('selection') || errorText.includes('Selection')) {
-            errorDetails = ' - Your data selection format may be incorrect. Check the selection syntax.';
+          
+          // Look for specific error patterns
+          if (errorText.toLowerCase().includes('variable') || errorText.toLowerCase().includes('variablecode')) {
+            errorMessage = 'Invalid variable name or code in selection';
+            troubleshootingTips.push('Use scb_get_table_variables to see all available variable names');
+            troubleshootingTips.push('Check that variable names match exactly (case-sensitive)');
+            troubleshootingTips.push('Try scb_test_selection to validate your selection first');
+          } else if (errorText.toLowerCase().includes('value') || errorText.toLowerCase().includes('valuecode')) {
+            errorMessage = 'Invalid variable values in selection';
+            troubleshootingTips.push('Use scb_get_table_variables with variableName to see valid values');
+            troubleshootingTips.push('For time data, try formats like "2024" or "2024M12" for monthly');
+            troubleshootingTips.push('For regions, verify codes with scb_find_region_code');
+          } else if (errorText.toLowerCase().includes('selection')) {
+            errorMessage = 'Invalid selection format or syntax';
+            troubleshootingTips.push('Use format: {"VariableName": ["value1", "value2"]}');
+            troubleshootingTips.push('Ensure variable names use proper case (e.g., "Region", not "region")');
+            troubleshootingTips.push('Test your selection with scb_test_selection first');
+          } else if (errorText.toLowerCase().includes('time') || errorText.toLowerCase().includes('date')) {
+            errorMessage = 'Invalid time/date format in selection';
+            troubleshootingTips.push('For annual data, use "2024"');
+            troubleshootingTips.push('For monthly data, use "2024M12" format');
+            troubleshootingTips.push('Check available time values with scb_get_table_variables');
           } else {
-            errorDetails = ` - Server response: ${errorText.substring(0, 200)}`;
+            // Generic error with server response
+            errorMessage = `Bad request (400): ${errorText.substring(0, 150)}`;
+            troubleshootingTips.push('Use scb_test_selection to validate your selection');
+            troubleshootingTips.push('Check variable names and values with scb_get_table_variables');
           }
+          
         } catch (e) {
-          errorDetails = ' - Could not parse error details.';
+          errorMessage = 'Bad request (400) - Could not parse error details';
+          troubleshootingTips.push('Use scb_test_selection to validate your selection');
+          troubleshootingTips.push('Check the table and selection format');
         }
-        throw new Error(`Bad request (400)${errorDetails}`);
+        
+        const fullError = troubleshootingTips.length > 0 
+          ? `${errorMessage}\n\nTroubleshooting suggestions:\n${troubleshootingTips.map(tip => `• ${tip}`).join('\n')}`
+          : errorMessage;
+          
+        throw new Error(fullError);
       }
       throw new Error(`API request failed: ${response.status} ${response.statusText}`);
     }
