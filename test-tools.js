@@ -304,6 +304,20 @@ class MCPTester {
     
     if (success) {
       await this.delay(3000);
+      
+      // Test table variables - this is important for users
+      await this.testTool('scb_get_table_variables', { 
+        tableId: testTableId 
+      }, `Get all variables for ${testTableId}`);
+      await this.delay(3000);
+      
+      // Test filtered table variables
+      await this.testTool('scb_get_table_variables', { 
+        tableId: testTableId,
+        variableName: 'Region'
+      }, `Get Region variable details for ${testTableId}`);
+      await this.delay(3000);
+      
       // Don't test data retrieval with selections as it might still have issues
       this.log('⚠️ Skipping data retrieval test - needs region code validation first', 'warning');
     }

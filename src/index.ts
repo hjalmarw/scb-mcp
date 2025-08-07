@@ -15,13 +15,6 @@ class SCBMCPServer {
   private server: Server;
   private apiClient: SCBApiClient;
   
-  /**
-   * Format structured data in a user-friendly way with both readable summary and raw JSON
-   */
-  private formatStructuredResponse(summary: string, data: any): string {
-    return `${summary}\n\n**📊 Structured Data:**\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
-  }
-
   constructor() {
     this.server = new Server(
       {
@@ -539,7 +532,7 @@ ${result.page.totalElements > 50 ? `💡 **Search Tips:**
       content: [
         {
           type: 'text',
-          text: this.formatStructuredResponse(summary, structuredData)
+          text: JSON.stringify(structuredData, null, 2)
         },
       ],
     };
@@ -618,7 +611,7 @@ ${structuredData.data.length > 3 ? `... and ${(structuredData.data.length - 3).t
       content: [
         {
           type: 'text',
-          text: this.formatStructuredResponse(summary, structuredData)
+          text: JSON.stringify(structuredData, null, 2)
         },
       ],
     };
@@ -830,7 +823,7 @@ ${variableData.map(v =>
         content: [
           {
             type: 'text',
-            text: this.formatStructuredResponse(summary, responseData)
+            text: JSON.stringify(responseData, null, 2)
           },
         ],
       };
@@ -1031,7 +1024,7 @@ ${exactResults.map(r => `- **${r.code}**: ${r.name}`).join('\n')}
         content: [
           {
             type: 'text',
-            text: this.formatStructuredResponse(summary, structuredData)
+            text: JSON.stringify(structuredData, null, 2)
           },
         ],
       };
@@ -1180,7 +1173,7 @@ ${structuredData.data.slice(0, 5).map(record => {
         content: [
           {
             type: 'text',
-            text: this.formatStructuredResponse(summary, previewData)
+            text: JSON.stringify(previewData, null, 2)
           },
         ],
       };
